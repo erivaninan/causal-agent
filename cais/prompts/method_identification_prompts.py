@@ -379,7 +379,7 @@ Important: Return only valid JSON. No explanations, reasoning, or markdown forma
 """
 
 TREATMENT_REFERENCE_IDENTIFICATION_PROMPT_TEMPLATE = """
-You are a causal inference assistant.
+You are an expert in causal inference.
 
 Dataset Description: {description}
 Identified Treatment Variable: "{treatment_variable}"
@@ -400,5 +400,57 @@ Respond ONLY with a JSON object adhering to this Pydantic model:
 {{
     "reference_level": "string_representing_the_level_or_null",
     "reasoning": "string_or_null_brief_explanation"
+}}
+"""
+
+FRONTDOOR_IDENTIFICATION_PROMPT_TEMPLATE = """
+You are an expert in causal inference.
+You need to assess whether a valid observed mediator exists in the dataset to apply front-door adjustment for estimating the causal effect in the user query.
+Use systematic reasoning to evaluate candidate mediators against the front-door criterion. You need to be strict with the assessment.
+Do not suggest front-door adjustment based only on correlations or column names.
+
+User Query: "{query}"
+Dataset Description: {description}
+Treatment: {treatment}
+Outcome: {outcome}
+Available Columns: {column_info}
+
+Think through this step by step:
+
+Step 1: Understand the causal question
+- What causal effect is the user trying to estimate?
+- Is there a reason to consider front-door adjustment, such as possible unobserved confounding between the treatment and outcome?
+
+Step 2: Identify candidate mediators
+- Which observed variables could occur after the treatment and before the outcome?
+- Which variables could plausibly lie on the causal pathway from the treatment to the outcome?
+- Exclude the treatment, outcome, pre-treatment covariates, instruments, and variables that are merely correlated with the treatment or outcome.
+- Only consider variables that appear in Available Columns.
+
+Step 3: Assess full mediation
+- Does the context support that all directed effects of the treatment on the outcome pass through the candidate mediator?
+- Reject the candidate if a direct treatment-to-outcome pathway or another mediating pathway is plausible.
+
+Step 4: Assess treatment-mediator confounding
+- Is there any open back-door path or common cause between the treatment and candidate mediator?
+- The candidate is valid only if the treatment-to-mediator relationship is unconfounded according to the available context.
+
+Step 5: Assess mediator-outcome confounding
+- Can all back-door paths from the candidate mediator to the outcome be blocked by conditioning on the treatment?
+- Reject the candidate if additional unobserved mediator-outcome confounding is plausible and is not blocked by the treatment.
+
+Step 6: Make the final determination
+- Select the best mediator only if the available description supports all front-door conditions above.
+- Set frontdoor_criterion to true only when all conditions are supported.
+- If no valid candidate exists, return null and false.
+- If the description lacks enough causal or temporal information to assess any condition, return null and false rather than guessing.
+- Do not create or suggest variables that are not in Available Columns.
+
+Important: Return only valid JSON. No explanations or markdown formatting outside the JSON object.
+
+{{
+    "mediator_variable": "column_name_or_null",
+    "frontdoor_criterion": true_or_false,
+    "reasoning": "brief_justification_or_null"
 }}
 """

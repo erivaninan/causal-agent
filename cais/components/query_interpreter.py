@@ -24,6 +24,7 @@ from cais.models import (
     LLMSelectedVariable,
     LLMSelectedCovariates,
     LLMIVars,
+    LLMFrontdoorVars,
     LLMRDDVars,
     LLMRCTCheck,
     LLMTreatmentReferenceLevel,
@@ -42,6 +43,7 @@ from cais.prompts.method_identification_prompts import (
     COVARIATES_IDENTIFICATION_PROMPT_TEMPLATE, 
     ESTIMAND_PROMPT_TEMPLATE,
     CONFOUNDER_IDENTIFICATION_PROMPT_TEMPLATE)
+from cais.prompts.method_identification_prompts import FRONTDOOR_IDENTIFICATION_PROMPT_TEMPLATE
 
 
 
@@ -196,7 +198,8 @@ def identify_interaction_term(llm: Optional[BaseChatModel], treatment_variable: 
 
 
 def interpret_query(query_info: Dict[str, Any], dataset_analysis: Dict[str, Any],
-                    dataset_description: Optional[str] = None) -> Dict[str, Any]:
+                    dataset_description: Optional[str] = None,
+                    llm: Optional[BaseChatModel] = None) -> Dict[str, Any]:
     """
     Interpret query using hybrid heuristic/LLM approach to identify variables.
     
@@ -211,7 +214,11 @@ def interpret_query(query_info: Dict[str, Any], dataset_analysis: Dict[str, Any]
     """
 
     print("Interpreting query with hybrid approach...")
-    llm = get_llm_client()
+    # Reuse the client configured by CausalAgent (including its provider and
+    # model).  Keep the factory fallback for callers that use this component
+    # directly.
+    if llm is None:
+        llm = get_llm_client()
     
     query_text = query_info.get("query_text", "")
     columns = dataset_analysis.get("columns", [])
@@ -286,6 +293,8 @@ def interpret_query(query_info: Dict[str, Any], dataset_analysis: Dict[str, Any]
 
     # --- Identify IV/RDD/RCT using LLM --- 
     instrument_variable = None
+    mediator_variable = None
+    frontdoor_criterion = False
     running_variable = None
     cutoff_value = None
     treat_above_cutoff = None
@@ -307,6 +316,33 @@ def interpret_query(query_info: Dict[str, Any], dataset_analysis: Dict[str, Any]
             if instrument_variable not in columns:
                 instrument_variable = None  
             logger.info(f"LLM identified IV: {instrument_variable}")
+
+            # Check for a front-door mediator. This is deliberately contextual because the graphical identification assumptions cannot be learned from associations in the observed dataset alone.
+            column_info = "\n".join(
+                f"- {column} (Type: {column_categories.get(column, 'Unknown')})"
+                for column in columns
+            )
+            prompt_frontdoor = FRONTDOOR_IDENTIFICATION_PROMPT_TEMPLATE.format(
+                query=query_text,
+                description=dataset_description or "N/A",
+                treatment=treatment_variable or "N/A",
+                outcome=outcome_variable or "N/A",
+                column_info=column_info,
+            )
+            frontdoor_result = _call_llm_for_var(
+                llm, prompt_frontdoor, LLMFrontdoorVars
+            )
+            if frontdoor_result:
+                mediator_variable = frontdoor_result.mediator_variable
+                frontdoor_criterion = bool(frontdoor_result.frontdoor_criterion)
+            if mediator_variable not in columns:
+                mediator_variable = None
+                frontdoor_criterion = False
+            logger.info(
+                "LLM identified front-door mediator=%s, criterion=%s",
+                mediator_variable,
+                frontdoor_criterion,
+            )
 
             # Check for RDD
             prompt_rdd = _create_identify_prompt("regression discontinuity (running variable and cutoff)", query_text, dataset_description, columns, column_categories, treatment_variable, outcome_variable)
@@ -377,6 +413,9 @@ def interpret_query(query_info: Dict[str, Any], dataset_analysis: Dict[str, Any]
         "treatment_state": treatment_state,
         ## for iv
         "instrument_variable": instrument_variable,
+        ## for front-door adjustment
+        "mediator_variable": mediator_variable,
+        "frontdoor_criterion": frontdoor_criterion,
         ## for rdd
         "running_variable": running_variable,
         "cutoff_value": cutoff_value,
@@ -455,21 +494,38 @@ def _identify_variable_hybrid(role: str, query_hints: List[str], dataset_suggest
         str: name of the identified variable, or None if not found
     """
 
-    candidates = set()
+    candidates = []
     available_columns = [c for c in columns if c not in (exclude_vars or [])]
     if not available_columns: return None
 
     # 1. Exact matches from hints
     for hint in query_hints:
         if hint in available_columns:
-            candidates.add(hint)
+            if hint not in candidates:
+                candidates.append(hint)
     # 2. Add dataset suggestions
     for sugg in dataset_suggestions:
         if sugg in available_columns:
-            candidates.add(sugg)
+            if sugg not in candidates:
+                candidates.append(sugg)
 
     # 3. Programmatic Filtering based on type
     plausible_candidates = [c for c in candidates if column_categories.get(c) in prioritize_types]
+
+    # A conceptual query may use human terms rather than exact column names (for example "steel imports" for ``import_penetration``). Prefer a column with lexical overlap before falling back to analyzer suggestions.
+    def normalized_tokens(value: str) -> set[str]:
+        tokens = re.findall(r"[a-z0-9]+", (value or "").lower())
+        return {token[:-1] if token.endswith("s") and len(token) > 3 else token for token in tokens}
+
+    context_tokens = normalized_tokens(f"{query_text} {dataset_description or ''}")
+    lexical_candidates = []
+    for column in available_columns:
+        if column_categories.get(column) not in prioritize_types:
+            continue
+        overlap = len(normalized_tokens(column) & context_tokens)
+        if overlap:
+            lexical_candidates.append((overlap, column))
+    lexical_candidates.sort(key=lambda item: (-item[0], available_columns.index(item[1])))
 
     if llm:
         if role == "treatment":
@@ -487,9 +543,16 @@ def _identify_variable_hybrid(role: str, query_hints: List[str], dataset_suggest
             logger.info(f"LLM selected {role}: {llm_choice.variable_name}")
             return llm_choice.variable_name
         else:
-            fallback = plausible_candidates[0] if plausible_candidates else None
+            fallback = lexical_candidates[0][1] if lexical_candidates else (
+                plausible_candidates[0] if plausible_candidates else None
+            )
             logger.warning(f"LLM failed to select valid {role}. Falling back to: {fallback}")
             return fallback
+
+    if lexical_candidates:
+        fallback = lexical_candidates[0][1]
+        logger.info(f"No LLM selection. Using lexical {role} match: {fallback}")
+        return fallback
 
     if plausible_candidates:
         logger.info(f"No LLM provided. Using first plausible {role}: {plausible_candidates[0]}")

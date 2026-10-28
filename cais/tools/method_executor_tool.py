@@ -82,6 +82,8 @@ def method_executor_tool(inputs: MethodExecutorInput, original_query: Optional[s
             required_cols_for_method.append(variables_dict["instrument_variable"])
         elif method == "regression_discontinuity" and variables_dict.get("running_variable"):
              required_cols_for_method.append(variables_dict["running_variable"])
+        elif method == "frontdoor_adjustment" and variables_dict.get("mediator_variable"):
+             required_cols_for_method.append(variables_dict["mediator_variable"])
         
         missing_df_cols = [col for col in required_cols_for_method if col not in df.columns]
         if missing_df_cols:
@@ -101,7 +103,7 @@ def method_executor_tool(inputs: MethodExecutorInput, original_query: Optional[s
         # Avoid passing the entire variables_dict as estimate_func expects specific args
         kwargs_for_method = {}
         for key in ["instrument_variable", "time_variable", "group_variable", 
-                    "running_variable", "cutoff_value", "treat_above_cutoff", "did_term", "did_canonical", "treatment_time", "treatment_state"]:
+                    "running_variable", "cutoff_value", "treat_above_cutoff", "did_term", "did_canonical", "treatment_time", "treatment_state", "mediator_variable"]:
             if key in variables_dict and variables_dict[key] is not None:
                  kwargs_for_method[key] = variables_dict[key]
         
@@ -206,4 +208,4 @@ def method_executor_tool(inputs: MethodExecutorInput, original_query: Optional[s
                         "column_mappings": column_mappings if 'column_mappings' in locals() else {} # Also add to error output
                         }
         error_result.update(workflow_update.get('workflow_state', {}))
-        return error_result 
+        return error_result

@@ -10,6 +10,7 @@ from cais.methods.regression_discontinuity.estimator import RDDRegression
 from cais.methods.difference_in_differences.estimator import DiDRegression
 from cais.methods.instrumental_variable.estimator import IVRegression
 from cais.methods.propensity_score.matching import PropensityScoreMatching
+from cais.methods.frontdoor_adjustment.estimator import FrontdoorAdjustment
 logger = logging.getLogger(__name__)
 
 class Estimators:
@@ -39,6 +40,7 @@ class Estimators:
             DiDRegression.name : DiDRegression(),
             IVRegression.name : IVRegression(),
             PropensityScoreMatching.name : PropensityScoreMatching(),
+            FrontdoorAdjustment.name : FrontdoorAdjustment(),
         }
 
         self.estimators = default_estimators

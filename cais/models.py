@@ -15,6 +15,18 @@ class LLMSelectedCovariates(BaseModel):
 class LLMIVars(BaseModel):
     """Pydantic model for identifying IVs."""
     instrument_variable: Optional[str] = Field(None, description="The identified instrumental variable column name.")
+
+class LLMFrontdoorVars(BaseModel):
+    """Candidate mediator and plausibility of the front-door structure."""
+    mediator_variable: Optional[str] = Field(
+        None,
+        description="Observed post-treatment mediator on the treatment-outcome causal path.",
+    )
+    frontdoor_criterion: bool = Field(
+        False,
+        description="Whether the supplied context plausibly supports the front-door criterion.",
+    )
+    reasoning: Optional[str] = None
     
 class LLMEstimand(BaseModel):
     """Pydantic model for identifying estimand"""
@@ -118,6 +130,11 @@ class Variables(BaseModel):
     treatment_variable_type: Optional[str] = Field(None, description="Type of the treatment variable (e.g., 'binary', 'continuous', 'categorical_multi_value')")
     outcome_variable: Optional[str] = None
     instrument_variable: Optional[str] = None
+    mediator_variable: Optional[str] = None
+    frontdoor_criterion: Optional[bool] = Field(
+        False,
+        description="Whether the available context plausibly supports front-door identification.",
+    )
     covariates: Optional[List[str]] = Field(default_factory=list)
     time_variable: Optional[str] = None
     group_variable: Optional[str] = None # Often the unit ID
@@ -149,6 +166,7 @@ class MethodSelectorInput(BaseModel):
     dataset_analysis: DatasetAnalysis # Uses the DatasetAnalysis model
     dataset_description: Optional[str] = None
     original_query: Optional[str] = None
+    llm: Optional[Any] = Field(default=None, exclude=True)
     # Note: is_rct is expected inside inputs.variables
 
 class IVDiscoveryInput(BaseModel):
@@ -186,6 +204,7 @@ class ControlsSelectorInput(BaseModel):
     dataset_analysis: DatasetAnalysis
     dataset_description: Optional[str] = None
     original_query: Optional[str] = None
+    llm: Optional[Any] = Field(default=None, exclude=True)
 
 class MethodValidatorInput(BaseModel):
     """Input structure for the method validator tool."""
@@ -220,6 +239,7 @@ class ExplainerInput(BaseModel):
     dataset_description: Optional[str] = None
     # Add original query if needed for explanation context
     original_query: Optional[str] = None 
+    llm: Optional[Any] = Field(default=None, exclude=True)
 
 # Add other shared models/schemas below as needed.
 

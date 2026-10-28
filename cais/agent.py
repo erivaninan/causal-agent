@@ -21,6 +21,7 @@ from cais.methods.regression_discontinuity.estimator import RDDRegression
 from cais.methods.difference_in_differences.estimator import DiDRegression
 from cais.methods.instrumental_variable.estimator import IVRegression
 from cais.methods.propensity_score.matching import PropensityScoreMatching
+from cais.methods.frontdoor_adjustment.estimator import FrontdoorAdjustment
 from cais.models import Variables, MethodInfo
 from cais.components.assumption_checks import IVTest, ObervationalTest, DiDTest, RDDTest
 
@@ -38,6 +39,7 @@ DIFF_IN_DIFF = "difference_in_differences"
 REGRESSION_DISCONTINUITY = "regression_discontinuity_design"
 PROPENSITY_SCORE_MATCHING = "propensity_score_matching"
 INSTRUMENTAL_VARIABLE = "instrumental_variable"
+FRONTDOOR_ADJUSTMENT = "frontdoor_adjustment"
 
 # Temporary name conversion
 convert = {
@@ -45,7 +47,8 @@ convert = {
     DIFF_IN_DIFF: DiDRegression.name,
     REGRESSION_DISCONTINUITY: RDDRegression.name,
     INSTRUMENTAL_VARIABLE: IVRegression.name,
-    PROPENSITY_SCORE_MATCHING: PropensityScoreMatching.name
+    PROPENSITY_SCORE_MATCHING: PropensityScoreMatching.name,
+    FRONTDOOR_ADJUSTMENT: FrontdoorAdjustment.name,
 }
 
 os.makedirs('./logs/', exist_ok=True)
@@ -135,7 +138,8 @@ class CausalAgent():
         query_interpreter_output = query_interpreter_tool.func(
             dataset_analysis=dataset_analysis,
             dataset_description=self.dataset_description,
-            original_query=query
+            original_query=query,
+            llm=self.llm,
         )
         
         self.dataset_analysis = dataset_analysis
@@ -154,8 +158,12 @@ class CausalAgent():
             original_query=query,
             excluded_methods=excluded,
             use_decision_tree=llm_decision, # LLM Decision Tree vs. Rule-based Decision Tree
+            llm=self.llm,
         )
 
+        if "method_info" not in method_selector_output:
+            error = method_selector_output.get("error", "Method selection returned no method information")
+            raise ValueError(f"Method selection failed: {error}")
         self.method_info = MethodInfo(**method_selector_output['method_info'])
         self.selected_method = self.method_info.selected_method
         return self.selected_method
@@ -206,6 +214,7 @@ class CausalAgent():
             dataset_analysis=self.dataset_analysis,
             dataset_description=self.dataset_description,
             original_query=query,
+            llm=self.llm,
         )
       
         self.variables = Variables(**controls_selector_output['variables']) # refined controls; need to update after cleaning
@@ -219,7 +228,8 @@ class CausalAgent():
             variables=self.variables.model_dump(),
             dataset_description=self.dataset_description,
             original_query=query,
-            causal_method=self.selected_method
+            causal_method=self.selected_method,
+            llm=self.llm,
         )
         self.cleaned_dataset_path = cleaning_output.get("cleaned_dataset_path")
         
@@ -275,7 +285,8 @@ class CausalAgent():
             dataset_analysis=self.dataset_analysis,
             validation_info=None,
             dataset_description=self.dataset_description,
-            original_query=query
+            original_query=query,
+            llm=self.llm,
         )['explanation']
 
         if self.cleaned_dataset_path and remove_cleaned:
@@ -547,4 +558,4 @@ def run_causal_analysis(query: str, dataset_path: str,
     except Exception as e:
         logger.error(f"An unexpected error occurred during causal analysis: {e}", exc_info=True)
         # Return an error dictionary in case of exception too
-        return {"error": f"An unexpected error occurred: {e}"} 
+        return {"error": f"An unexpected error occurred: {e}"}

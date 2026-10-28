@@ -15,6 +15,7 @@ from .linear_regression.estimator import estimate_effect as lr_estimate_effect
 from .backdoor_adjustment.estimator import estimate_effect as ba_estimate_effect
 from .regression_discontinuity.estimator import estimate_effect as rdd_estimate_effect
 from .generalized_propensity_score.estimator import estimate_effect_gps
+from .frontdoor_adjustment.estimator import estimate_effect as frontdoor_estimate_effect
 
 # Mapping of method names to their implementation functions
 METHOD_MAPPING = {
@@ -27,6 +28,7 @@ METHOD_MAPPING = {
     "linear_regression": lr_estimate_effect,
     "diff_in_means": dim_estimate_effect,
     "generalized_propensity_score": estimate_effect_gps,
+    "frontdoor_adjustment": frontdoor_estimate_effect,
 }
 
 __all__ = [
@@ -41,4 +43,5 @@ __all__ = [
     "ba_estimate_effect",
     "METHOD_MAPPING",
     "estimate_effect_gps",
+    "frontdoor_estimate_effect",
 ]

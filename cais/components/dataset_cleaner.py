@@ -245,7 +245,8 @@ def run_cleaning_stage(dataset_path: str,
                        dataset_description: Optional[str] = None,
                        original_query: Optional[str] = None,
                        causal_method: Optional[str] = None,
-                       max_repair_attempts: int = 2) -> Dict[str, Any]:
+                       max_repair_attempts: int = 2,
+                       llm: Optional[Any] = None) -> Dict[str, Any]:
     """
     Returns (unchanged keys):
       - cleaned_dataset_path
@@ -254,7 +255,8 @@ def run_cleaning_stage(dataset_path: str,
       - stdout
       - stderr
     """
-    llm = get_llm_client()
+    if llm is None:
+        llm = get_llm_client()
 
     dataset_path = dataset_path.replace("\\", "/")
     base_name = os.path.basename(dataset_path)
@@ -295,6 +297,51 @@ def run_cleaning_stage(dataset_path: str,
     if not os.path.exists(cleaned_path):
         report.append(f"\n⚠️ Cleaned file not found at expected path; falling back to original dataset.")
         cleaned_path = dataset_path
+    else:
+        # LLM-generated cleaning code must never discard design columns.  In
+        # particular, DiD needs the unit and time identifiers even though they
+        # are neither treatment, outcome, nor controls. Restore any such
+        # columns when row alignment is unchanged, otherwise use the original
+        # data rather than returning a dataset that cannot be estimated.
+        structural_keys = (
+            "time_variable",
+            "group_variable",
+            "instrument_variable",
+            "running_variable",
+            "mediator_variable",
+        )
+        structural_columns = [
+            variables.get(key) for key in structural_keys if variables.get(key)
+        ]
+        try:
+            original_df = pd.read_csv(dataset_path)
+            cleaned_df = pd.read_csv(cleaned_path)
+            missing_structural = [
+                column
+                for column in structural_columns
+                if column in original_df.columns and column not in cleaned_df.columns
+            ]
+            if missing_structural:
+                if len(cleaned_df) == len(original_df):
+                    for column in missing_structural:
+                        cleaned_df[column] = original_df[column].to_numpy()
+                    cleaned_df.to_csv(cleaned_path, index=False)
+                    report.append(
+                        "Restored required design columns: "
+                        + ", ".join(missing_structural)
+                    )
+                else:
+                    report.append(
+                        "\nCleaning removed required design columns after changing "
+                        "row alignment, falling back to original dataset."
+                    )
+                    cleaned_path = dataset_path
+        except Exception as validation_error:
+            report.append(
+                f"\nCould not validate cleaned design columns "
+                f"({validation_error}); falling back to original dataset."
+            )
+            cleaned_path = dataset_path
     
     return {
         "cleaned_dataset_path": cleaned_path,

@@ -85,8 +85,10 @@ METHOD_ASSUMPTIONS = {
         "treatment variable is continuous"
     ],
     FRONTDOOR_ADJUSTMENT: [
-        "mediator is affected by treatment and affects outcome",
-        "mediator is not affected by any confounders of the treatment-outcome relationship"
+        "all directed treatment-outcome paths pass through the mediator (full mediation)",
+        "there is no unblocked back-door path from treatment to mediator",
+        "treatment blocks every back-door path from mediator to outcome",
+        "positivity holds for the required treatment-mediator combinations"
     ]
 }
 
