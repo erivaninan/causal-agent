@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 def dataset_cleaner_tool(dataset_path: str,
                          variables: Dict[str, Any],
                          dataset_description: Optional[str] = None,
-                         original_query: Optional[str] = None, causal_method: Optional[str] = None) -> Dict[str, Any]:
+                         original_query: Optional[str] = None, causal_method: Optional[str] = None,
+                         llm: Optional[Any] = None) -> Dict[str, Any]:
     """
     Clean the dataset conservatively (missing-data handling + normalization only),
     generate a temporary, cleaned dataframe, and return the new path + a markdown report.
@@ -23,7 +24,8 @@ def dataset_cleaner_tool(dataset_path: str,
         variables=variables,
         dataset_description=dataset_description,
         original_query=original_query,
-        causal_method=causal_method
+        causal_method=causal_method,
+        llm=llm,
     )
 
     # Wire into workflow state
