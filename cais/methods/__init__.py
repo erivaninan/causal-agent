@@ -17,6 +17,8 @@ from .regression_discontinuity.estimator import estimate_effect as rdd_estimate_
 from .generalized_propensity_score.estimator import estimate_effect_gps
 from .frontdoor_adjustment.estimator import estimate_effect as frontdoor_estimate_effect
 from .synthetic_control.estimator import estimate_effect as synthetic_control_estimate_effect
+from .fuzzy_regression_discontinuity.estimator import estimate_effect as fuzzy_rdd_estimate_effect
+from .donut_regression_discontinuity.estimator import estimate_effect as donut_rdd_estimate_effect
 
 # Mapping of method names to their implementation functions
 METHOD_MAPPING = {
@@ -31,6 +33,8 @@ METHOD_MAPPING = {
     "generalized_propensity_score": estimate_effect_gps,
     "frontdoor_adjustment": frontdoor_estimate_effect,
     "synthetic_control": synthetic_control_estimate_effect,
+    "fuzzy_regression_discontinuity_design": fuzzy_rdd_estimate_effect,
+    "donut_regression_discontinuity_design": donut_rdd_estimate_effect,
 }
 
 __all__ = [
@@ -47,4 +51,6 @@ __all__ = [
     "estimate_effect_gps",
     "frontdoor_estimate_effect",
     "synthetic_control_estimate_effect",
+    "fuzzy_rdd_estimate_effect",
+    "donut_rdd_estimate_effect",
 ]

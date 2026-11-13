@@ -587,6 +587,16 @@ ASSUMPTION_REGISTRY: Dict[str, List] = {
         check_rdd_covariate_continuity,
         check_rdd_continuity_potential_outcomes,
     ],
+    "fuzzy_regression_discontinuity_design": [
+        check_rdd_no_manipulation,
+        check_rdd_covariate_continuity,
+        check_rdd_continuity_potential_outcomes,
+    ],
+    "donut_regression_discontinuity_design": [
+        check_rdd_no_manipulation,
+        check_rdd_covariate_continuity,
+        check_rdd_continuity_potential_outcomes,
+    ],
     "backdoor_adjustment": [
         check_sutva,
         check_cond_ignorability,

@@ -527,7 +527,8 @@ class TestAssumptionRegistries(unittest.TestCase):
             "linear_regression", "propensity_score_matching",
             "instrumental_variable", "difference_in_differences",
             "frontdoor_adjustment", "regression_discontinuity_design",
-            "backdoor_adjustment",
+            "fuzzy_regression_discontinuity_design",
+            "donut_regression_discontinuity_design", "backdoor_adjustment",
         }
         self.assertEqual(set(ASSUMPTION_REGISTRY.keys()), expected)
 
@@ -552,6 +553,9 @@ class TestAssumptionRegistries(unittest.TestCase):
     def test_rdd_pre_checks_count(self):
         checks = ASSUMPTION_REGISTRY["regression_discontinuity_design"]
         self.assertGreaterEqual(len(checks), 3)
+
+        fuzzy_checks = ASSUMPTION_REGISTRY["fuzzy_regression_discontinuity_design"]
+        self.assertEqual(fuzzy_checks, checks)
 
     def test_frontdoor_pre_checks_count(self):
         checks = ASSUMPTION_REGISTRY["frontdoor_adjustment"]

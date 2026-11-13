@@ -853,7 +853,7 @@ def validate_method(method_info: Dict[str, Any], dataset_analysis: Dict[str, Any
     elif method == "difference_in_differences":
         validate_difference_in_differences(validation_result, dataset_analysis, variables)
     
-    elif method == "regression_discontinuity_design":
+    elif method in ["regression_discontinuity_design", "fuzzy_regression_discontinuity_design", "donut_regression_discontinuity_design"]:
         validate_regression_discontinuity(validation_result, dataset_analysis, variables)
     
     elif method == "backdoor_adjustment":

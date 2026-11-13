@@ -12,6 +12,8 @@ from cais.methods.instrumental_variable.estimator import IVRegression
 from cais.methods.propensity_score.matching import PropensityScoreMatching
 from cais.methods.frontdoor_adjustment.estimator import FrontdoorAdjustment
 from cais.methods.synthetic_control.estimator import SyntheticControl
+from cais.methods.fuzzy_regression_discontinuity.estimator import FuzzyRDD
+from cais.methods.donut_regression_discontinuity.estimator import DonutRDD
 logger = logging.getLogger(__name__)
 
 class Estimators:
@@ -43,6 +45,8 @@ class Estimators:
             PropensityScoreMatching.name : PropensityScoreMatching(),
             FrontdoorAdjustment.name : FrontdoorAdjustment(),
             SyntheticControl.name : SyntheticControl(),
+            FuzzyRDD.name : FuzzyRDD(),
+            DonutRDD.name : DonutRDD(),
         }
 
         self.estimators = default_estimators

@@ -23,6 +23,8 @@ from cais.methods.instrumental_variable.estimator import IVRegression
 from cais.methods.propensity_score.matching import PropensityScoreMatching
 from cais.methods.frontdoor_adjustment.estimator import FrontdoorAdjustment
 from cais.methods.synthetic_control.estimator import SyntheticControl
+from cais.methods.fuzzy_regression_discontinuity.estimator import FuzzyRDD
+from cais.methods.donut_regression_discontinuity.estimator import DonutRDD
 from cais.models import Variables, MethodInfo
 from cais.components.assumption_checks import IVTest, ObervationalTest, DiDTest, RDDTest
 
@@ -42,6 +44,8 @@ PROPENSITY_SCORE_MATCHING = "propensity_score_matching"
 INSTRUMENTAL_VARIABLE = "instrumental_variable"
 FRONTDOOR_ADJUSTMENT = "frontdoor_adjustment"
 SYNTHETIC_CONTROL = "synthetic_control"
+FUZZY_REGRESSION_DISCONTINUITY = "fuzzy_regression_discontinuity_design"
+DONUT_REGRESSION_DISCONTINUITY = "donut_regression_discontinuity_design"
 
 # Temporary name conversion
 convert = {
@@ -52,6 +56,8 @@ convert = {
     PROPENSITY_SCORE_MATCHING: PropensityScoreMatching.name,
     FRONTDOOR_ADJUSTMENT: FrontdoorAdjustment.name,
     SYNTHETIC_CONTROL: SyntheticControl.name,
+    FUZZY_REGRESSION_DISCONTINUITY: FuzzyRDD.name,
+    DONUT_REGRESSION_DISCONTINUITY: DonutRDD.name,
 }
 
 os.makedirs('./logs/', exist_ok=True)

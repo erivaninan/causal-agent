@@ -15,6 +15,8 @@ LINEAR_REGRESSION = "linear_regression"
 DIFF_IN_MEANS = "diff_in_means"
 DIFF_IN_DIFF = "difference_in_differences"
 REGRESSION_DISCONTINUITY = "regression_discontinuity_design"
+FUZZY_REGRESSION_DISCONTINUITY = "fuzzy_regression_discontinuity_design"
+DONUT_REGRESSION_DISCONTINUITY = "donut_regression_discontinuity_design"
 PROPENSITY_SCORE_MATCHING = "propensity_score_matching"
 INSTRUMENTAL_VARIABLE = "instrumental_variable"
 CORRELATION_ANALYSIS = "correlation_analysis"
@@ -91,6 +93,20 @@ METHOD_ASSUMPTIONS = {
         "treatment blocks every back-door path from mediator to outcome",
         "positivity holds for the required treatment-mediator combinations"
     ],
+    FUZZY_REGRESSION_DISCONTINUITY: [
+        "eligibility changes discontinuously at the cutoff and is relevant for treatment receipt",
+        "potential outcomes and potential treatment receipt are continuous at the cutoff",
+        "cutoff eligibility affects the outcome only through treatment receipt",
+        "treatment receipt is monotone in eligibility near the cutoff",
+        "units cannot precisely manipulate the running variable around the cutoff",
+    ],
+    DONUT_REGRESSION_DISCONTINUITY: [
+        "contamination or manipulation is confined to a prespecified neighborhood of the cutoff",
+        "treatment assignment remains sharp outside the excluded neighborhood",
+        "potential-outcome regressions are smooth enough to extrapolate across the excluded region",
+        "no other intervention changes at the cutoff",
+        "the donut radius is selected independently of the estimated treatment effect",
+    ],
     SYNTHETIC_CONTROL: [
         "no interference between treated and donor units",
         "no anticipation before treatment",
@@ -147,6 +163,19 @@ def _get_decision_path(method: str) -> List[str]:
             "Data is observational",
             "Check front-door criterion",
             "Front-door path identified",
+        ],
+        "fuzzy_regression_discontinuity_design": [
+            "Check if randomized experiment",
+            "Data is observational",
+            "Check for a treatment-eligibility discontinuity",
+            "Treatment receipt is not deterministic at the cutoff",
+            "Estimate the local Wald complier effect",
+        ],
+        "donut_regression_discontinuity_design": [
+            "Check for localized cutoff contamination",
+            "Require a prespecified exclusion radius",
+            "Retain observations outside the donut and inside the outer bandwidth",
+            "Estimate an extrapolated local sharp-RD jump",
         ],
         "synthetic_control": [
             "Check for panel data",

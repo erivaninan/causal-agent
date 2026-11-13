@@ -145,6 +145,10 @@ class Variables(BaseModel):
     running_variable: Optional[str] = None
     cutoff_value: Optional[Union[float, int]] = None
     treat_above_cutoff: Optional[bool] = None
+    donut_radius: Optional[float] = Field(
+        None,
+        description="Prespecified half-width excluded around the cutoff for Donut RDD.",
+    )
     is_rct: Optional[bool] = Field(False, description="Flag indicating if the dataset is from an RCT.")
     treatment_reference_level: Optional[Union[float, str]] = Field(None, description="The specified reference/control level for a multi-valued treatment variable.")
     interaction_term_suggested: Optional[bool] = Field(False, description="Whether the query or context suggests an interaction term with the treatment might be relevant.")
