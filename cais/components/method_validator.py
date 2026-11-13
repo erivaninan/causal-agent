@@ -734,6 +734,45 @@ def validate_frontdoor_adjustment(validation_result: Dict[str, Any],
     }
 
 
+def validate_synthetic_control(validation_result: Dict[str, Any],
+                               dataset_analysis: Dict[str, Any],
+                               variables: Dict[str, Any]) -> None:
+    """Validate the observable panel and donor-pool requirements."""
+    treatment = variables.get("treatment_variable")
+    outcome = variables.get("outcome_variable")
+    time = variables.get("time_variable")
+    group = variables.get("group_variable")
+    unnamed = [label for label, value in {
+        "treatment": treatment, "outcome": outcome, "time": time, "group": group
+    }.items() if not value]
+    if unnamed:
+        validation_result["valid"] = False
+        validation_result["concerns"].append(
+            f"Synthetic control requires identified variables for: {unnamed}."
+        )
+        return
+    try:
+        path = dataset_analysis["dataset_info"]["file_path"]
+        df = pd.read_csv(path, usecols=[group, time, treatment, outcome])
+        if df.duplicated([group, time]).any():
+            raise ValueError("duplicate unit-time observations")
+        exposure = df.groupby(group, observed=False)[treatment].max()
+        n_treated = int((exposure == 1).sum())
+        n_donors = int((exposure == 0).sum())
+        validation_result.setdefault("evidence", {})["synthetic_control_design"] = {
+            "treated_units": n_treated,
+            "donor_units": n_donors,
+        }
+        if n_treated == 0 or n_donors < 2:
+            validation_result["valid"] = False
+            validation_result["concerns"].append(
+                "Synthetic control requires at least one treated and two never-treated donor units."
+            )
+    except (KeyError, OSError, ValueError) as exc:
+        validation_result["valid"] = False
+        validation_result["concerns"].append(f"Synthetic-control design checks failed: {exc}")
+
+
 def recommend_alternative(method: str, concerns: List[str], alternatives: List[str]) -> str:
     """
     Recommend an alternative method if the current one has issues.
@@ -822,6 +861,9 @@ def validate_method(method_info: Dict[str, Any], dataset_analysis: Dict[str, Any
 
     elif method == "frontdoor_adjustment":
         validate_frontdoor_adjustment(validation_result, dataset_analysis, variables)
+
+    elif method == "synthetic_control":
+        validate_synthetic_control(validation_result, dataset_analysis, variables)
     
     # If there are serious concerns, recommend alternatives
     if not validation_result["valid"]:

@@ -11,6 +11,7 @@ from cais.methods.difference_in_differences.estimator import DiDRegression
 from cais.methods.instrumental_variable.estimator import IVRegression
 from cais.methods.propensity_score.matching import PropensityScoreMatching
 from cais.methods.frontdoor_adjustment.estimator import FrontdoorAdjustment
+from cais.methods.synthetic_control.estimator import SyntheticControl
 logger = logging.getLogger(__name__)
 
 class Estimators:
@@ -41,6 +42,7 @@ class Estimators:
             IVRegression.name : IVRegression(),
             PropensityScoreMatching.name : PropensityScoreMatching(),
             FrontdoorAdjustment.name : FrontdoorAdjustment(),
+            SyntheticControl.name : SyntheticControl(),
         }
 
         self.estimators = default_estimators

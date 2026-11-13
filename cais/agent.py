@@ -22,6 +22,7 @@ from cais.methods.difference_in_differences.estimator import DiDRegression
 from cais.methods.instrumental_variable.estimator import IVRegression
 from cais.methods.propensity_score.matching import PropensityScoreMatching
 from cais.methods.frontdoor_adjustment.estimator import FrontdoorAdjustment
+from cais.methods.synthetic_control.estimator import SyntheticControl
 from cais.models import Variables, MethodInfo
 from cais.components.assumption_checks import IVTest, ObervationalTest, DiDTest, RDDTest
 
@@ -40,6 +41,7 @@ REGRESSION_DISCONTINUITY = "regression_discontinuity_design"
 PROPENSITY_SCORE_MATCHING = "propensity_score_matching"
 INSTRUMENTAL_VARIABLE = "instrumental_variable"
 FRONTDOOR_ADJUSTMENT = "frontdoor_adjustment"
+SYNTHETIC_CONTROL = "synthetic_control"
 
 # Temporary name conversion
 convert = {
@@ -49,6 +51,7 @@ convert = {
     INSTRUMENTAL_VARIABLE: IVRegression.name,
     PROPENSITY_SCORE_MATCHING: PropensityScoreMatching.name,
     FRONTDOOR_ADJUSTMENT: FrontdoorAdjustment.name,
+    SYNTHETIC_CONTROL: SyntheticControl.name,
 }
 
 os.makedirs('./logs/', exist_ok=True)

@@ -84,6 +84,8 @@ def method_executor_tool(inputs: MethodExecutorInput, original_query: Optional[s
              required_cols_for_method.append(variables_dict["running_variable"])
         elif method == "frontdoor_adjustment" and variables_dict.get("mediator_variable"):
              required_cols_for_method.append(variables_dict["mediator_variable"])
+        elif method == "synthetic_control":
+             required_cols_for_method.extend(filter(None, [variables_dict.get("time_variable"), variables_dict.get("group_variable")]))
         
         missing_df_cols = [col for col in required_cols_for_method if col not in df.columns]
         if missing_df_cols:
