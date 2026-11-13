@@ -1,306 +1,413 @@
-"""Non-parametric front-door adjustment for discrete treatments and mediators.
+"""Frontdoor adjustment for causal effect estimation through a mediator.
 
-The implementation follows Pearl's front-door functional::
+Implements the frontdoor formula (Pearl) for a discrete treatment T and a
+discrete mediator M:
 
-    E[Y | do(X=x)] = sum_m P(m | x) sum_x' E[Y | m, x'] P(x')
+    E[Y | do(T=t)] = sum_m P(M=m | T=t) * [ sum_t' E[Y | M=m, T=t'] * P(T=t') ]
 
-It supports binary or categorical treatments and mediators, numeric outcomes,
-and uses a non-parametric bootstrap for uncertainty estimates.
+The inner sum estimates E[Y | do(M=m)] using the treatment distribution to
+remove unmeasured confounding of M and Y; the outer sum re-expresses the
+outcome under each treatment level through the mediator distribution.
+
+Identification requires (all argued, not tested, by the tree's advisories):
+  (i)   M intercepts every directed path from T to Y (full mediation),
+  (ii)  no unmeasured confounding of T and M,
+  (iii) T blocks every backdoor path between M and Y.
+The tree additionally gates on (treatment, mediator) cell support.
+
+Only discrete treatment levels and a discrete, low-cardinality mediator are
+supported. Continuous treatments/mediators need a different estimator, so they
+are refused here; the tree's data-suitability check falls back to the backdoor
+branch for such data.
 """
 
-from __future__ import annotations
-
-from typing import Any, Dict, Optional
+import logging
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 
 from cais.methods.causal_method import CausalMethod
-from cais.models import Variables
+
+logger = logging.getLogger(__name__)
+
+# Frontdoor needs finite level sets for both variables; beyond this the plug-in
+# sums are not meaningful (and are better handled by a different estimator).
+MAX_DISCRETE_LEVELS = 10
+
+DEFAULT_N_BOOTSTRAPS = 500
+DEFAULT_SEED = 0  # deterministic bootstrap by default, matching the repo's reproducibility goal
+DEFAULT_MIN_CELL_COUNT = 5
 
 
-def _sorted_levels(series: pd.Series) -> list[Any]:
-    """Return stable levels for numeric or string-like discrete variables."""
-    values = series.dropna().unique().tolist()
+class FrontdoorNotSupported(ValueError):
+    """Raised when the data cannot support the frontdoor plug-in estimator."""
+
+
+def _sorted_levels(series: pd.Series) -> List[Any]:
+    """Deterministic ordering of a discrete column's levels."""
+    uniques = [value for value in pd.unique(series.dropna())]
     try:
-        return sorted(values)
+        return sorted(uniques)
     except TypeError:
-        return sorted(values, key=lambda value: str(value))
+        return sorted(uniques, key=lambda value: str(value))
 
 
-def _frontdoor_means(
-    df: pd.DataFrame,
-    treatment: str,
-    mediator: str,
-    outcome: str,
-    *,
-    min_cell_count: int = 1,
-) -> tuple[Dict[Any, float], Dict[str, Any]]:
-    """Evaluate the discrete front-door functional for every treatment level."""
-    x_levels = _sorted_levels(df[treatment])
-    m_levels = _sorted_levels(df[mediator])
-    if len(x_levels) < 2:
-        raise ValueError("Front-door adjustment requires at least two treatment levels.")
-    if len(m_levels) < 2:
-        raise ValueError("Front-door adjustment requires at least two mediator levels.")
-
-    p_x = df[treatment].value_counts(normalize=True, sort=False)
-    cell_counts = df.groupby([treatment, mediator], observed=False).size()
-    missing_cells = []
-    sparse_cells = []
-    conditional_y: Dict[tuple[Any, Any], float] = {}
-
-    for x_level in x_levels:
-        for m_level in m_levels:
-            count = int(cell_counts.get((x_level, m_level), 0))
-            if count == 0:
-                missing_cells.append({"treatment": x_level, "mediator": m_level})
-                continue
-            if count < min_cell_count:
-                sparse_cells.append(
-                    {"treatment": x_level, "mediator": m_level, "count": count}
-                )
-            mask = (df[treatment] == x_level) & (df[mediator] == m_level)
-            conditional_y[(x_level, m_level)] = float(df.loc[mask, outcome].mean())
-
-    if missing_cells:
-        raise ValueError(
-            "Front-door positivity is violated: some treatment-mediator cells "
-            f"are empty: {missing_cells}."
-        )
-
-    # Back-door adjustment of M -> Y by X.
-    y_do_m = {
-        m_level: float(
-            sum(
-                conditional_y[(x_level, m_level)] * float(p_x.loc[x_level])
-                for x_level in x_levels
-            )
-        )
-        for m_level in m_levels
-    }
-
-    interventional_means: Dict[Any, float] = {}
-    mediator_probabilities: Dict[str, float] = {}
-    for x_level in x_levels:
-        subset = df.loc[df[treatment] == x_level, mediator]
-        p_m_given_x = subset.value_counts(normalize=True, sort=False)
-        interventional_means[x_level] = float(
-            sum(float(p_m_given_x.get(m_level, 0.0)) * y_do_m[m_level] for m_level in m_levels)
-        )
-        for m_level in m_levels:
-            mediator_probabilities[f"P({mediator}={m_level}|{treatment}={x_level})"] = float(
-                p_m_given_x.get(m_level, 0.0)
-            )
-
-    diagnostics = {
-        "treatment_levels": x_levels,
-        "mediator_levels": m_levels,
-        "treatment_probabilities": {str(k): float(v) for k, v in p_x.items()},
-        "mediator_probabilities": mediator_probabilities,
-        "mediator_interventional_outcome_means": {
-            str(k): float(v) for k, v in y_do_m.items()
-        },
-        "cell_counts": {
-            f"{treatment}={x_level},{mediator}={m_level}": int(
-                cell_counts.get((x_level, m_level), 0)
-            )
-            for x_level in x_levels
-            for m_level in m_levels
-        },
-        "sparse_cells": sparse_cells,
-    }
-    return interventional_means, diagnostics
-
-
-def estimate_effect(
-    df: pd.DataFrame,
-    treatment: str,
-    outcome: str,
-    covariates: Optional[list[str]] = None,
-    mediator_variable: Optional[str] = None,
-    mediator: Optional[str] = None,
-    treatment_reference_level: Optional[Any] = None,
-    treatment_comparison_level: Optional[Any] = None,
-    n_bootstrap: int = 500,
-    random_state: Optional[int] = 731460,
-    min_cell_count: int = 5,
-    **_: Any,
-) -> Dict[str, Any]:
-    """Estimate a discrete front-door average treatment contrast.
-
-    ``covariates`` are intentionally unused: the canonical front-door formula
-    adjusts the mediator-outcome relationship for the treatment itself.
-    """
-    mediator_name = mediator_variable or mediator
-    if not mediator_name:
-        raise ValueError("Front-door adjustment requires a mediator variable.")
-
-    required = [treatment, mediator_name, outcome]
-    missing = [column for column in required if column not in df.columns]
+def _prepare_data(df: pd.DataFrame, treatment: str, outcome: str, mediator: str,
+                  min_cell_count: int) -> pd.DataFrame:
+    """Validate columns/levels/support and return the complete-case frame."""
+    if df is None or not isinstance(df, pd.DataFrame):
+        raise FrontdoorNotSupported("Frontdoor adjustment requires a pandas DataFrame.")
+    missing = [column for column in (treatment, outcome, mediator) if column not in df.columns]
     if missing:
-        raise ValueError(f"Missing required front-door columns: {missing}")
-
-    analysis = df[required].dropna().copy()
-    if analysis.empty:
-        raise ValueError("No complete observations remain for front-door adjustment.")
-    if not pd.api.types.is_numeric_dtype(analysis[outcome]):
-        raise ValueError("The front-door outcome must be numeric.")
-
-    treatment_levels = _sorted_levels(analysis[treatment])
-    if len(treatment_levels) != 2:
-        raise ValueError(
-            "This front-door implementation currently requires a binary treatment; "
-            f"found {len(treatment_levels)} levels."
-        )
-    if analysis[mediator_name].nunique() > 20:
-        raise ValueError(
-            "This front-door implementation currently requires a discrete mediator "
-            "with at most 20 levels."
+        raise FrontdoorNotSupported(
+            f"Frontdoor adjustment is missing required column(s): {missing}."
         )
 
-    reference = (
-        treatment_reference_level
-        if treatment_reference_level is not None
-        else treatment_levels[0]
-    )
-    if reference not in treatment_levels:
-        raise ValueError(f"Unknown treatment reference level: {reference!r}.")
-    comparison = treatment_comparison_level
-    if comparison is None:
-        comparison = next(level for level in treatment_levels if level != reference)
-    if comparison not in treatment_levels or comparison == reference:
-        raise ValueError(f"Invalid treatment comparison level: {comparison!r}.")
+    data = df[[treatment, mediator, outcome]].dropna()
+    if len(data) < 20:
+        raise FrontdoorNotSupported(
+            "Frontdoor adjustment cannot establish positivity/support with fewer "
+            f"than 20 complete observations; got {len(data)}."
+        )
+    if not pd.api.types.is_numeric_dtype(data[outcome]):
+        raise FrontdoorNotSupported("Frontdoor adjustment requires a numeric outcome.")
 
-    means, diagnostics = _frontdoor_means(
-        analysis,
-        treatment,
-        mediator_name,
-        outcome,
-        min_cell_count=min_cell_count,
-    )
-    effect = float(means[comparison] - means[reference])
-
-    bootstrap_effects: list[float] = []
-    if n_bootstrap > 0:
-        rng = np.random.default_rng(random_state)
-        for _iteration in range(n_bootstrap):
-            indices = rng.integers(0, len(analysis), size=len(analysis))
-            sample = analysis.iloc[indices]
-            try:
-                sample_means, _ = _frontdoor_means(
-                    sample,
-                    treatment,
-                    mediator_name,
-                    outcome,
-                    min_cell_count=1,
-                )
-            except ValueError:
-                continue
-            bootstrap_effects.append(
-                float(sample_means[comparison] - sample_means[reference])
-            )
-
-    if n_bootstrap > 0 and len(bootstrap_effects) < max(30, int(0.8 * n_bootstrap)):
-        raise ValueError(
-            "Too many bootstrap samples violated front-door positivity; "
-            "the data do not provide stable support for inference."
+    treatment_levels = _sorted_levels(data[treatment])
+    mediator_levels = _sorted_levels(data[mediator])
+    if len(treatment_levels) < 2:
+        raise FrontdoorNotSupported("Frontdoor adjustment requires at least two treatment levels.")
+    if len(treatment_levels) > MAX_DISCRETE_LEVELS:
+        raise FrontdoorNotSupported(
+            f"Frontdoor adjustment needs a discrete treatment; '{treatment}' has "
+            f"{len(treatment_levels)} levels (max {MAX_DISCRETE_LEVELS})."
+        )
+    if len(mediator_levels) > MAX_DISCRETE_LEVELS:
+        raise FrontdoorNotSupported(
+            f"Frontdoor adjustment needs a discrete mediator; '{mediator}' has "
+            f"{len(mediator_levels)} levels (max {MAX_DISCRETE_LEVELS})."
         )
 
-    if bootstrap_effects:
-        bootstrap_array = np.asarray(bootstrap_effects)
-        standard_error = float(np.std(bootstrap_array, ddof=1))
-        confidence_interval = tuple(
-            float(value) for value in np.quantile(bootstrap_array, [0.025, 0.975])
+    # (treatment, mediator) support: the frontdoor sums require every cell the
+    # treatment distribution puts mass on.
+    counts = data.groupby([treatment, mediator], observed=True).size()
+    observed = set(counts.index)
+    sparse = []
+    for treatment_level in treatment_levels:
+        for mediator_level in mediator_levels:
+            n_cell = int(counts.get((treatment_level, mediator_level), 0))
+            if n_cell < min_cell_count:
+                sparse.append((treatment_level, mediator_level, n_cell))
+    if sparse:
+        raise FrontdoorNotSupported(
+            "Frontdoor positivity requires non-empty (treatment, mediator) cells with at "
+            f"least {min_cell_count} observations; sparse cells: {sparse[:5]}"
+            + (" ..." if len(sparse) > 5 else "")
+            + "."
         )
-        p_value = (
-            float(2 * stats.norm.sf(abs(effect / standard_error)))
-            if standard_error > 0
-            else (0.0 if effect != 0 else 1.0)
+    return data
+
+
+def _adrf(data: pd.DataFrame, treatment: str, outcome: str, mediator: str,
+          treatment_levels: Sequence[Any], mediator_levels: Sequence[Any]) -> Dict[Any, float]:
+    """Plug-in estimate of E[Y | do(T=t)] for every treatment level.
+
+    Cell means give E[Y | M=m, T=t']; the observed treatment distribution
+    P(T=t') turns those into E[Y | do(M=m)]; the conditional mediator
+    distribution P(M=m | T=t) then yields E[Y | do(T=t)].
+    """
+    p_treatment = data[treatment].value_counts(normalize=True)
+    n_by_treatment = data[treatment].value_counts()
+
+    cell_counts: Dict[tuple, int] = {}
+    cell_means: Dict[tuple, float] = {}
+    grouped = data.groupby([treatment, mediator], observed=True)[outcome]
+    for (treatment_level, mediator_level), values in grouped:
+        cell_counts[(treatment_level, mediator_level)] = int(len(values))
+        cell_means[(treatment_level, mediator_level)] = float(values.mean())
+
+    # E[Y | do(M=m)]: average the cell outcome over the treatment distribution.
+    do_mediator: Dict[Any, float] = {}
+    for mediator_level in mediator_levels:
+        do_mediator[mediator_level] = sum(
+            cell_means[(treatment_level, mediator_level)] * float(p_treatment.get(treatment_level, 0.0))
+            for treatment_level in treatment_levels
+        )
+
+    # E[Y | do(T=t)]: push P(M=m | T=t) through E[Y | do(M=m)].
+    adrf: Dict[Any, float] = {}
+    for treatment_level in treatment_levels:
+        n_t = int(n_by_treatment.get(treatment_level, 0))
+        adrf[treatment_level] = sum(
+            (cell_counts.get((treatment_level, mediator_level), 0) / n_t) * do_mediator[mediator_level]
+            for mediator_level in mediator_levels
+        )
+    return adrf
+
+
+def _summarize_effect(adrf: Dict[Any, float], treatment_levels: Sequence[Any],
+                      treatment_reference_level: Optional[Any],
+                      p_treatment: Optional[pd.Series] = None) -> Dict[str, Any]:
+    """Reduce the ADRF to the scalar effect the pipeline reports.
+
+    * Two treatment levels: contrast of the non-reference level vs reference.
+    * More than two levels: average deviation from the reference level across
+      the observed treatment distribution (an ADRF summary; the full vector is
+      reported in diagnostics).
+    """
+    levels = list(treatment_levels)
+    reference = treatment_reference_level if treatment_reference_level in levels else levels[0]
+    if treatment_reference_level is not None and treatment_reference_level not in levels:
+        logger.warning(
+            "Treatment reference level %r is not an observed level; using %r.",
+            treatment_reference_level, reference,
+        )
+    contrasts = {
+        str(level): float(adrf[level] - adrf[reference])
+        for level in levels if level != reference
+    }
+    if len(levels) == 2:
+        effect = next(iter(contrasts.values()))
+        estimand = (
+            f"ATE: E[Y | do(T={levels[1] if levels[0] == reference else levels[0]})] "
+            f"- E[Y | do(T={reference})]"
         )
     else:
+        if p_treatment is None:
+            weights = {str(level): 1.0 for level in levels if level != reference}
+        else:
+            weights = {
+                str(level): float(p_treatment.get(level, 0.0))
+                for level in levels if level != reference
+            }
+        total_weight = sum(weights.values())
+        weights = ({key: value / total_weight for key, value in weights.items()}
+                   if total_weight > 0 else {key: 1.0 / len(weights) for key in weights})
+        effect = float(sum(weights[key] * contrasts[key] for key in contrasts))
+        estimand = (
+            "Average deviation of E[Y | do(T=t)] from the reference level "
+            f"T={reference}, weighted by the observed treatment distribution "
+            "(multi-level ADRF summary)"
+        )
+    return {"effect": effect, "contrasts": contrasts, "reference_level": reference,
+            "estimand": estimand}
+
+
+def estimate_frontdoor_effect(
+    df: pd.DataFrame,
+    treatment: str,
+    outcome: str,
+    mediator: str,
+    *,
+    treatment_reference_level: Optional[Any] = None,
+    n_bootstraps: int = DEFAULT_N_BOOTSTRAPS,
+    seed: int = DEFAULT_SEED,
+    min_cell_count: int = DEFAULT_MIN_CELL_COUNT,
+) -> Dict[str, Any]:
+    """Estimate the frontdoor-adjusted effect of ``treatment`` on ``outcome``.
+
+    Args:
+        df: Dataset with the treatment, mediator, and outcome columns.
+        treatment: Discrete treatment column.
+        outcome: Continuous outcome column.
+        mediator: Discrete mediator column.
+        treatment_reference_level: Level used as the reference for the reported
+            contrast. Defaults to the lowest observed level.
+        n_bootstraps: Bootstrap replications for the standard error/CI.
+        seed: Seed for the (deterministic by default) row bootstrap.
+        min_cell_count: Minimum observations per (treatment, mediator) cell.
+
+    Returns:
+        Standard method result dict (effect_estimate, standard_error,
+        confidence_interval, p_value, diagnostics, ...).
+
+    Raises:
+        FrontdoorNotSupported: If the data cannot support the estimator.
+    """
+    data = _prepare_data(df, treatment, outcome, mediator, min_cell_count)
+    treatment_levels = _sorted_levels(data[treatment])
+    mediator_levels = _sorted_levels(data[mediator])
+    p_treatment = data[treatment].value_counts(normalize=True)
+
+    adrf = _adrf(data, treatment, outcome, mediator, treatment_levels, mediator_levels)
+    summary = _summarize_effect(adrf, treatment_levels, treatment_reference_level, p_treatment)
+    effect = summary["effect"]
+
+    # Bootstrap rows; skip resamples whose support collapses (a sparse cell).
+    rng = np.random.default_rng(seed)
+    bootstrap_effects: List[float] = []
+    n_bootstraps = int(n_bootstraps)
+    for _ in range(n_bootstraps):
+        sample = data.iloc[rng.integers(0, len(data), len(data))]
+        try:
+            sample_data = _prepare_data(sample, treatment, outcome, mediator, 1)
+            sample_levels = _sorted_levels(sample_data[treatment])
+            sample_mediators = _sorted_levels(sample_data[mediator])
+            sample_adrf = _adrf(sample_data, treatment, outcome, mediator,
+                                sample_levels, sample_mediators)
+            sample_summary = _summarize_effect(
+                sample_adrf, sample_levels, summary["reference_level"],
+                sample_data[treatment].value_counts(normalize=True),
+            )
+            bootstrap_effects.append(sample_summary["effect"])
+        except (FrontdoorNotSupported, KeyError, ZeroDivisionError):
+            continue
+
+    if len(bootstrap_effects) < max(20, n_bootstraps // 2):
+        raise FrontdoorNotSupported(
+            f"Frontdoor bootstrap failed for too many resamples "
+            f"({len(bootstrap_effects)}/{n_bootstraps} succeeded); the mediator support is too sparse."
+        )
+
+    bootstrap = np.asarray(bootstrap_effects, dtype=float)
+    standard_error = float(bootstrap.std(ddof=1)) if len(bootstrap) > 1 else None
+    if standard_error is not None and np.isfinite(standard_error):
+        ci_low, ci_high = np.percentile(bootstrap, [2.5, 97.5])
+        share_below = float((bootstrap <= 0.0).mean())
+        share_above = float((bootstrap >= 0.0).mean())
+        p_value = float(min(1.0, 2.0 * min(share_below, share_above)))
+        # Keep the p-value strictly positive when every draw agrees on the sign.
+        p_value = max(p_value, 1.0 / (len(bootstrap) + 1.0))
+        confidence_interval = [float(ci_low), float(ci_high)]
+    else:
         standard_error = None
-        confidence_interval = (None, None)
+        confidence_interval = None
         p_value = None
 
-    diagnostics.update(
-        {
-            "n_observations": len(analysis),
-            "reference_level": reference,
-            "comparison_level": comparison,
-            "interventional_outcome_means": {
-                str(level): float(value) for level, value in means.items()
-            },
-            "bootstrap_requested": n_bootstrap,
-            "bootstrap_successful": len(bootstrap_effects),
-            "identification_warning": (
-                "The estimate is causal only if the front-door criterion holds: full "
-                "mediation, no unblocked treatment-mediator confounding, and all "
-                "mediator-outcome back-door paths blocked by treatment."
-            ),
-        }
-    )
+    diagnostics = {
+        "adrf": {str(level): float(value) for level, value in adrf.items()},
+        "contrasts_vs_reference": summary["contrasts"],
+        "reference_level": summary["reference_level"],
+        "estimand": summary["estimand"],
+        "treatment_levels": [str(level) for level in treatment_levels],
+        "mediator_levels": [str(level) for level in mediator_levels],
+        "n_observations": int(len(data)),
+        "cell_counts": {
+            f"{treatment_level}|{mediator_level}": int(
+                data[(data[treatment] == treatment_level) & (data[mediator] == mediator_level)].shape[0]
+            )
+            for treatment_level in treatment_levels
+            for mediator_level in mediator_levels
+        },
+        "n_bootstraps": n_bootstraps,
+        "n_bootstrap_success": len(bootstrap_effects),
+        "bootstrap_successful": len(bootstrap_effects),
+        "seed": int(seed),
+        "frontdoor_assumptions": [
+            "M intercepts every directed path from T to Y (full mediation; advisory)",
+            "No unmeasured confounding of T and M (advisory)",
+            "T blocks every backdoor path between M and Y (advisory)",
+            "(treatment, mediator) support: positivity gate",
+        ],
+    }
 
     return {
-        "effect_estimate": effect,
+        "effect_estimate": float(effect),
         "standard_error": standard_error,
         "confidence_interval": confidence_interval,
         "p_value": p_value,
-        "method_used": "Front-door Adjustment",
+        "method_used": "frontdoor_adjustment",
+        "method_details": (
+            "Frontdoor adjustment: discrete (treatment, mediator) plug-in formula "
+            "with row bootstrap inference."
+        ),
         "diagnostics": diagnostics,
-        "raw_results": {
-            "interventional_outcome_means": diagnostics["interventional_outcome_means"],
-            "contrast": f"{comparison} - {reference}",
+        "parameters": {
+            "treatment_variable": treatment,
+            "outcome_variable": outcome,
+            "mediator_variable": mediator,
+            "treatment_levels": [str(level) for level in treatment_levels],
+            "mediator_levels": [str(level) for level in mediator_levels],
+            "reference_level": summary["reference_level"],
+            "n_bootstraps": n_bootstraps,
+            "seed": int(seed),
+            "min_cell_count": int(min_cell_count),
         },
     }
 
 
+def estimate_effect(df: pd.DataFrame, treatment: str, outcome: str,
+                    covariates: Optional[List[str]] = None,
+                    dataset_description: Optional[str] = None,
+                    **kwargs) -> Dict[str, Any]:
+    """METHOD_MAPPING entry point used by the method executor."""
+    mediator = kwargs.get("mediator_variable") or kwargs.get("mediator")
+    if not mediator:
+        raise FrontdoorNotSupported(
+            "Frontdoor adjustment requires a mediator column; none was identified."
+        )
+    return estimate_frontdoor_effect(
+        df,
+        treatment=treatment,
+        outcome=outcome,
+        mediator=mediator,
+        treatment_reference_level=kwargs.get("treatment_reference_level"),
+        n_bootstraps=kwargs.get("n_bootstraps", kwargs.get("n_bootstrap", DEFAULT_N_BOOTSTRAPS)),
+        seed=kwargs.get("seed", kwargs.get("random_state", DEFAULT_SEED)),
+        min_cell_count=kwargs.get("min_cell_count", DEFAULT_MIN_CELL_COUNT),
+    )
+
+
 class FrontdoorAdjustment(CausalMethod):
-    """Pipeline adapter for the discrete front-door estimator."""
+    """CausalMethod wrapper: frontdoor adjustment through an identified mediator."""
 
     name = "Frontdoor Adjustment"
     description = (
-        "Identifies the effect of a binary treatment on a numeric outcome through "
-        "an observed discrete mediator using Pearl's front-door adjustment formula."
+        "Frontdoor adjustment identifies a causal effect by routing it through a "
+        "mediator: M intercepts every path from T to Y, T does not confound M, and T "
+        "blocks confounding between M and Y. Used when unmeasured confounding of T and "
+        "Y is suspected but a clean mediator is available."
     )
     assumptions = [
-        "All directed treatment-outcome paths pass through the mediator (full mediation).",
-        "There is no unblocked back-door path from treatment to mediator.",
-        "Treatment blocks every back-door path from mediator to outcome.",
-        "All required treatment-mediator combinations have positive probability.",
+        "Full mediation: the mediator intercepts all directed paths from treatment to outcome",
+        "No unmeasured confounding between treatment and mediator",
+        "Treatment blocks all backdoor paths between mediator and outcome",
+        "Positivity/overlap of the (treatment, mediator) cells",
     ]
 
-    def validate_assumptions(self, df: pd.DataFrame, variables: Variables) -> Dict[str, Any]:
-        mediator = variables.mediator_variable
-        required = [variables.treatment_variable, mediator, variables.outcome_variable]
-        missing_names = [name for name in required if not name]
-        missing_columns = self.check_missing(df, [name for name in required if name])
+    def validate_assumptions(self, df: pd.DataFrame, variables) -> Dict[str, Any]:
+        mediator = getattr(variables, "mediator_variable", None)
         return {
-            "assumptions_valid": not missing_names and not missing_columns,
-            "failed_assumptions": (
-                ["Treatment, mediator, and outcome must be identified."]
-                if missing_names
-                else []
-            ),
-            "warnings": [
-                "Graphical front-door assumptions require substantive justification; "
-                "they cannot be established from the observed distribution alone."
+            "assumptions_valid": bool(mediator),
+            "failed_assumptions": [] if mediator else ["No mediator identified"],
+            "warnings": [] if mediator else [
+                "Frontdoor adjustment requires a mediator column."
             ],
             "suggestions": [],
-            "missing_columns": sorted(missing_columns),
         }
 
-    def estimate_effect(
-        self,
-        df: pd.DataFrame,
-        variables: Variables,
-        query: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        return estimate_effect(
-            df=df,
-            treatment=variables.treatment_variable,
-            outcome=variables.outcome_variable,
-            mediator_variable=variables.mediator_variable,
-            treatment_reference_level=variables.treatment_reference_level,
-        )
+    def estimate_effect(self, df: pd.DataFrame, variables, query: Optional[str] = None,
+                        mediator_variable: Optional[str] = None,
+                        treatment_reference_level: Optional[Any] = None,
+                        n_bootstraps: Optional[int] = None,
+                        seed: Optional[int] = None) -> Dict[str, Any]:
+        mediator = mediator_variable or getattr(variables, "mediator_variable", None)
+        reference_level = (treatment_reference_level if treatment_reference_level is not None
+                           else getattr(variables, "treatment_reference_level", None))
+        if not mediator:
+            return {
+                "error": "Frontdoor adjustment requires a mediator column; none was identified.",
+                "effect_estimate": None,
+                "method_used": "frontdoor_adjustment",
+                "diagnostics": {"error": "missing mediator"},
+            }
+        try:
+            result = estimate_frontdoor_effect(
+                df,
+                treatment=variables.treatment_variable,
+                outcome=variables.outcome_variable,
+                mediator=mediator,
+                treatment_reference_level=reference_level,
+                n_bootstraps=n_bootstraps if n_bootstraps is not None else DEFAULT_N_BOOTSTRAPS,
+                seed=seed if seed is not None else DEFAULT_SEED,
+            )
+        except (FrontdoorNotSupported, KeyError, TypeError) as exc:
+            logger.warning("Frontdoor adjustment failed: %s", exc)
+            return {
+                "error": str(exc),
+                "effect_estimate": None,
+                "method_used": "frontdoor_adjustment",
+                "diagnostics": {"error": str(exc)},
+            }
+        return result

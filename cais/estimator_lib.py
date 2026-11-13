@@ -7,13 +7,15 @@ from typing import List, Set
 from cais.methods.causal_method import CausalMethod
 from cais.methods.linear_regression.estimator import LinearRegression
 from cais.methods.regression_discontinuity.estimator import RDDRegression
+from cais.methods.regression_discontinuity.donut_estimator import DonutRDD
 from cais.methods.difference_in_differences.estimator import DiDRegression
+from cais.methods.difference_in_differences.time_window import DiDTimeWindow
 from cais.methods.instrumental_variable.estimator import IVRegression
 from cais.methods.propensity_score.matching import PropensityScoreMatching
+from cais.methods.propensity_score.weighting import TrimmedIPW
 from cais.methods.frontdoor_adjustment.estimator import FrontdoorAdjustment
 from cais.methods.synthetic_control.estimator import SyntheticControl
 from cais.methods.fuzzy_regression_discontinuity.estimator import FuzzyRDD
-from cais.methods.donut_regression_discontinuity.estimator import DonutRDD
 logger = logging.getLogger(__name__)
 
 class Estimators:
@@ -40,13 +42,15 @@ class Estimators:
             # Add variables, i.e.
             LinearRegression.name : LinearRegression(),
             RDDRegression.name : RDDRegression(),
+            DonutRDD.name : DonutRDD(),
             DiDRegression.name : DiDRegression(),
+            DiDTimeWindow.name : DiDTimeWindow(),
             IVRegression.name : IVRegression(),
             PropensityScoreMatching.name : PropensityScoreMatching(),
+            TrimmedIPW.name : TrimmedIPW(),
             FrontdoorAdjustment.name : FrontdoorAdjustment(),
             SyntheticControl.name : SyntheticControl(),
             FuzzyRDD.name : FuzzyRDD(),
-            DonutRDD.name : DonutRDD(),
         }
 
         self.estimators = default_estimators

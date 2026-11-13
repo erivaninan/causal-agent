@@ -80,7 +80,7 @@ def method_executor_tool(inputs: MethodExecutorInput, original_query: Optional[s
         # Add method-specific required vars from the variables_dict
         if method == "instrumental_variable" and variables_dict.get("instrument_variable"):
             required_cols_for_method.append(variables_dict["instrument_variable"])
-        elif method in ["regression_discontinuity", "regression_discontinuity_design", "fuzzy_regression_discontinuity_design", "donut_regression_discontinuity_design"] and variables_dict.get("running_variable"):
+        elif method in ["regression_discontinuity", "regression_discontinuity_design", "fuzzy_regression_discontinuity_design", "donut_rdd"] and variables_dict.get("running_variable"):
              required_cols_for_method.append(variables_dict["running_variable"])
         elif method == "frontdoor_adjustment" and variables_dict.get("mediator_variable"):
              required_cols_for_method.append(variables_dict["mediator_variable"])
@@ -105,7 +105,7 @@ def method_executor_tool(inputs: MethodExecutorInput, original_query: Optional[s
         # Avoid passing the entire variables_dict as estimate_func expects specific args
         kwargs_for_method = {}
         for key in ["instrument_variable", "time_variable", "group_variable", 
-                    "running_variable", "cutoff_value", "treat_above_cutoff", "donut_radius", "did_term", "did_canonical", "treatment_time", "treatment_state", "mediator_variable"]:
+                    "running_variable", "cutoff_value", "treat_above_cutoff", "did_term", "did_canonical", "treatment_time", "treatment_state", "mediator_variable"]:
             if key in variables_dict and variables_dict[key] is not None:
                  kwargs_for_method[key] = variables_dict[key]
         
@@ -121,6 +121,10 @@ def method_executor_tool(inputs: MethodExecutorInput, original_query: Optional[s
         # Add query if needed by llm_assist functions within the method
         kwargs_for_method['query'] = query_str
         kwargs_for_method['column_mappings'] = column_mappings
+        # Leaf-specific execution settings recorded by the decision tree
+        # (e.g. mediator_variable for frontdoor, ps_bounds for trimmed IPW).
+        if getattr(inputs, "method_options", None):
+            kwargs_for_method.update(inputs.method_options)
         
                  
         results_dict = estimate_func(
