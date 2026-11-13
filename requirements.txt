@@ -1,4 +1,6 @@
 pandas
+openpyxl
+scipy
 vertexai
 openai
 google-cloud-aiplatform
