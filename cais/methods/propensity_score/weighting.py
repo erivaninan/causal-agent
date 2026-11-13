@@ -9,6 +9,64 @@ from .base import estimate_propensity_scores, format_ps_results, select_propensi
 from .diagnostics import assess_weight_distribution, plot_overlap, plot_balance # Import diagnostic functions
 from .llm_assist import determine_optimal_weight_type, determine_optimal_trim_threshold, get_llm_parameters # Import LLM helpers
 
+
+SUPPORTED_WEIGHT_TYPES = {"ATE", "ATT", "ATC"}
+
+
+def calculate_iptw_weights(
+    treatment: pd.Series,
+    propensity_scores: pd.Series,
+    weight_type: str = "ATE",
+    stabilized: bool = False,
+) -> np.ndarray:
+    """Calculate binary-treatment IPTW weights for ATE, ATT, or ATC.
+
+    Stabilized ATE weights use the marginal treatment probability in the
+    numerator. ATT and ATC use their standard target-population (odds)
+    weights; multiplying an entire arm by a marginal-odds constant would not
+    change its weighted mean and is therefore not presented as a distinct
+    causal estimator.
+    """
+    treatment_values = pd.Series(treatment).to_numpy()
+    scores = np.asarray(propensity_scores, dtype=float)
+    estimand = str(weight_type).upper()
+
+    if estimand not in SUPPORTED_WEIGHT_TYPES:
+        raise ValueError(
+            f"Unsupported weight type: {weight_type}. "
+            f"Expected one of {sorted(SUPPORTED_WEIGHT_TYPES)}."
+        )
+    if not np.isin(treatment_values, [0, 1]).all():
+        raise ValueError("IPTW requires a binary treatment coded as 0 and 1.")
+    if not np.isfinite(scores).all() or ((scores <= 0) | (scores >= 1)).any():
+        raise ValueError("Propensity scores must be finite and strictly between 0 and 1.")
+
+    treated_probability = float(np.mean(treatment_values))
+    if treated_probability <= 0 or treated_probability >= 1:
+        raise ValueError("IPTW requires observations in both treatment arms.")
+
+    if estimand == "ATE":
+        treated_numerator = treated_probability if stabilized else 1.0
+        control_numerator = (1.0 - treated_probability) if stabilized else 1.0
+        return np.where(
+            treatment_values == 1,
+            treated_numerator / scores,
+            control_numerator / (1.0 - scores),
+        )
+
+    if estimand == "ATT":
+        return np.where(
+            treatment_values == 1,
+            1.0,
+            scores / (1.0 - scores),
+        )
+
+    return np.where(
+        treatment_values == 1,
+        (1.0 - scores) / scores,
+        1.0,
+    )
+
 def estimate_effect(df: pd.DataFrame, treatment: str, outcome: str, 
                       covariates: List[str], **kwargs) -> Dict[str, Any]:
     '''Generic propensity score weighting (IPW) implementation.
@@ -18,7 +76,8 @@ def estimate_effect(df: pd.DataFrame, treatment: str, outcome: str,
         treatment: Name of treatment variable
         outcome: Name of outcome variable
         covariates: List of covariate names
-        **kwargs: Method-specific parameters (e.g., weight_type, trim_threshold, query)
+        **kwargs: Method-specific parameters (e.g., weight_type, stabilized,
+            trim_threshold, query)
         
     Returns:
         Dictionary with effect estimate and diagnostics
@@ -33,6 +92,7 @@ def estimate_effect(df: pd.DataFrame, treatment: str, outcome: str,
     llm_weight_type = llm_suggested_params.get('weight_type')
     default_weight_type = determine_optimal_weight_type(df, treatment, query) if llm_weight_type is None else llm_weight_type
     weight_type = kwargs.get('weight_type', default_weight_type)
+    stabilized = bool(kwargs.get('stabilized', llm_suggested_params.get('stabilized', False)))
     
     # Similar explicit check for trim_threshold
     llm_trim_thresh = llm_suggested_params.get('trim_threshold')
@@ -51,18 +111,14 @@ def estimate_effect(df: pd.DataFrame, treatment: str, outcome: str,
     df_ps = df.copy()
     df_ps['propensity_score'] = propensity_scores
 
-    # --- Step 2: Calculate weights --- 
-    if weight_type.upper() == 'ATE':
-        weights = np.where(df_ps[treatment] == 1, 
-                           1 / df_ps['propensity_score'], 
-                           1 / (1 - df_ps['propensity_score']))
-    elif weight_type.upper() == 'ATT':
-        weights = np.where(df_ps[treatment] == 1, 
-                           1, 
-                           df_ps['propensity_score'] / (1 - df_ps['propensity_score']))
-    # TODO: Add other weight types like ATC if needed
-    else:
-        raise ValueError(f"Unsupported weight type: {weight_type}")
+    # --- Step 2: Calculate weights ---
+    weight_type = str(weight_type).upper()
+    weights = calculate_iptw_weights(
+        df_ps[treatment],
+        df_ps['propensity_score'],
+        weight_type=weight_type,
+        stabilized=stabilized,
+    )
         
     df_ps['ipw'] = weights
 
@@ -86,8 +142,9 @@ def estimate_effect(df: pd.DataFrame, treatment: str, outcome: str,
         trim_threshold = 0 # Explicitly set for parameters output
 
     # --- Step 4: Normalize weights (optional but common) --- 
-    # Normalize weights to sum to sample size within treated/control groups if ATT
-    if weight_type.upper() == 'ATT':
+    # Normalize within arms for target-population weights (ATT/ATC). This does
+    # not change the weighted arm means, but keeps their scale interpretable.
+    if weight_type in {'ATT', 'ATC'}:
         sum_weights_treated = df_analysis.loc[df_analysis[treatment] == 1, 'ipw'].sum()
         sum_weights_control = df_analysis.loc[df_analysis[treatment] == 0, 'ipw'].sum()
         n_treated = (df_analysis[treatment] == 1).sum()
@@ -114,11 +171,15 @@ def estimate_effect(df: pd.DataFrame, treatment: str, outcome: str,
     # weighted_diagnostics = assess_balance(df, df_analysis, treatment, covariates, method="PSW", weights=df_analysis['ipw'])
     # diagnostics.update(weighted_diagnostics)
     diagnostics["propensity_score_model"] = propensity_model_type
+    diagnostics["weight_type"] = weight_type
+    diagnostics["stabilized"] = stabilized
+    diagnostics["treated_prevalence"] = float(df_analysis[treatment].mean())
 
     # --- Step 7: Format and return results --- 
     return format_ps_results(effect, effect_se, diagnostics,
                            method_details="PS.Weighting",
                            parameters={"weight_type": weight_type, 
+                                         "stabilized": stabilized,
                                          "trim_threshold": trim_threshold,
                                          "propensity_model": propensity_model_type,
-                                         "robust_se": robust_se}) 
+                                         "robust_se": robust_se})
