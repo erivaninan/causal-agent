@@ -22,6 +22,12 @@ from .generalized_propensity_score.estimator import estimate_effect_gps
 from .frontdoor_adjustment.estimator import estimate_effect as frontdoor_estimate_effect
 from .synthetic_control.estimator import estimate_effect as synthetic_control_estimate_effect
 from .fuzzy_regression_discontinuity.estimator import estimate_effect as fuzzy_rdd_estimate_effect
+from .meta_learners.estimator import (
+    estimate_s_learner,
+    estimate_t_learner,
+    estimate_x_learner,
+    estimate_r_learner,
+)
 
 # Mapping of method names to their implementation functions
 METHOD_MAPPING = {
@@ -41,6 +47,10 @@ METHOD_MAPPING = {
     "frontdoor_adjustment": frontdoor_estimate_effect,
     "synthetic_control": synthetic_control_estimate_effect,
     "fuzzy_regression_discontinuity_design": fuzzy_rdd_estimate_effect,
+    "s_learner": estimate_s_learner,
+    "t_learner": estimate_t_learner,
+    "x_learner": estimate_x_learner,
+    "r_learner": estimate_r_learner,
 }
 
 __all__ = [
@@ -62,4 +72,8 @@ __all__ = [
     "frontdoor_estimate_effect",
     "synthetic_control_estimate_effect",
     "fuzzy_rdd_estimate_effect",
+    "estimate_s_learner",
+    "estimate_t_learner",
+    "estimate_x_learner",
+    "estimate_r_learner",
 ]

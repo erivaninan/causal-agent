@@ -68,7 +68,15 @@ def method_executor_tool(inputs: MethodExecutorInput, original_query: Optional[s
         treatment = variables_dict.get("treatment_variable")
         outcome = variables_dict.get("outcome_variable")
         covariates = variables_dict.get("covariates", [])
-        if method in ["propensity_score_matching", "propensity_score_weighting", "generalized_propensity_score"]:
+        if method in [
+            "propensity_score_matching",
+            "propensity_score_weighting",
+            "generalized_propensity_score",
+            "s_learner",
+            "t_learner",
+            "x_learner",
+            "r_learner",
+        ]:
             covariates = variables_dict.get("confounders", [])
         query_str = original_query if original_query is not None else inputs.original_query
         
@@ -164,6 +172,8 @@ def method_executor_tool(inputs: MethodExecutorInput, original_query: Optional[s
                 "raw_results": results_dict.get("raw_results"),
                 # Diagnostics and Refutation results
                 "diagnostics": results_dict.get("diagnostics"),
+                "individual_effect_predictions": results_dict.get("individual_effect_predictions"),
+                "parameters": results_dict.get("parameters"),
                 "refutation_results": results_dict.get("refutation_results")
             },
             # Top-level context to be passed along
