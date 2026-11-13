@@ -226,6 +226,39 @@ class CausalAgent():
             if temporal is not None:
                 unit_variable = getattr(temporal, "id_column", None)
 
+        is_sharp_rdd = None
+        if variables.running_variable and variables.cutoff_value is not None:
+            try:
+                frame = self.load_dataset()
+                treatment = frame[variables.treatment_variable]
+                running = frame[variables.running_variable]
+                valid = treatment.notna() & running.notna()
+                observed = treatment.loc[valid]
+                if set(observed.unique()).issubset({0, 1, False, True}) and valid.any():
+                    assigned = running.loc[valid].astype(float) >= float(variables.cutoff_value)
+                    if getattr(variables, "treat_above_cutoff", None) is False:
+                        assigned = ~assigned
+                    is_sharp_rdd = bool((observed.astype(bool) == assigned).all())
+            except (KeyError, TypeError, ValueError):
+                is_sharp_rdd = None
+
+        staggered_adoption = None
+        if variables.group_variable and variables.time_variable:
+            try:
+                frame = self.load_dataset()
+                treatment_name = variables.treatment_variable
+                required = [variables.group_variable, variables.time_variable, treatment_name]
+                panel = frame[required].dropna()
+                if set(panel[treatment_name].unique()).issubset({0, 1, False, True}):
+                    starts = []
+                    for _, group in panel.sort_values(variables.time_variable).groupby(variables.group_variable):
+                        treated = group.loc[group[treatment_name].astype(bool), variables.time_variable]
+                        if not treated.empty and group[treatment_name].nunique() > 1:
+                            starts.append(treated.iloc[0])
+                    staggered_adoption = len(set(starts)) > 1 if starts else False
+            except (KeyError, TypeError, ValueError):
+                staggered_adoption = None
+
         return {
             "treatment_variable": variables.treatment_variable,
             "outcome_variable": variables.outcome_variable,
@@ -253,6 +286,8 @@ class CausalAgent():
             "is_structure_supported": True,
             "anticipation_known_bounded": False,
             "local_manipulation": False,
+            "is_sharp_rdd": is_sharp_rdd,
+            "staggered_adoption": staggered_adoption,
             "treatment_reference_level": getattr(variables, "treatment_reference_level", None),
         }
 
