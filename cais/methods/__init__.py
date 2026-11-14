@@ -28,6 +28,12 @@ from .meta_learners.estimator import (
     estimate_x_learner,
     estimate_r_learner,
 )
+from .registry_adapters import (
+    IPWEstimator,
+    GeneralizedPropensityScoreEstimator,
+    BackdoorAdjustmentEstimator,
+    DifferenceInMeansEstimator,
+)
 
 # Mapping of method names to their implementation functions
 METHOD_MAPPING = {
@@ -44,7 +50,6 @@ METHOD_MAPPING = {
     "linear_regression": lr_estimate_effect,
     "diff_in_means": dim_estimate_effect,
     "generalized_propensity_score": estimate_effect_gps,
-    "frontdoor_adjustment": frontdoor_estimate_effect,
     "synthetic_control": synthetic_control_estimate_effect,
     "fuzzy_regression_discontinuity_design": fuzzy_rdd_estimate_effect,
     "s_learner": estimate_s_learner,
@@ -52,6 +57,9 @@ METHOD_MAPPING = {
     "x_learner": estimate_x_learner,
     "r_learner": estimate_r_learner,
 }
+
+# Stable route inventory used by validation and registry-alignment tests.
+EXECUTABLE_METHOD_IDS = frozenset(METHOD_MAPPING)
 
 __all__ = [
     "CausalMethod",
@@ -76,4 +84,9 @@ __all__ = [
     "estimate_t_learner",
     "estimate_x_learner",
     "estimate_r_learner",
+    "IPWEstimator",
+    "GeneralizedPropensityScoreEstimator",
+    "BackdoorAdjustmentEstimator",
+    "DifferenceInMeansEstimator",
+    "EXECUTABLE_METHOD_IDS",
 ]
